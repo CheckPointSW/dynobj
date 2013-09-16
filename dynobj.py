@@ -1,3 +1,20 @@
+#!/usr/bin/env python
+
+#   Copyright 2013 Check Point Software Technologies LTD
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+   
+
 import paramiko
 import socket
 import struct
@@ -176,19 +193,19 @@ if __name__ == '__main__':
 		s.printObject()
 		s.addObject('obj1', True)
 		s.printObject('obj1')
-		s.addAddress('obj1', '1.2.3.4')
+		s.addAddress('obj1', '10.2.3.4')
 		s.printObject('obj1')
-		s.addAddress('obj1', '1.2.3.5')
+		s.addAddress('obj1', '10.2.3.5')
 		s.printObject('obj1')
-		s.addAddress('obj1', '1.2.3.7')
+		s.addAddress('obj1', '10.2.3.7')
 		s.printObject('obj1')
-		s.addAddress('obj1', '1.2.3.6')
+		s.addAddress('obj1', '10.2.3.6')
 		s.printObject('obj1')
-		s.delAddress('obj1', '1.2.3.5')
+		s.delAddress('obj1', '10.2.3.5')
 		s.printObject('obj1')
-		s.delAddress('obj1', '1.2.3.7')
+		s.delAddress('obj1', '10.2.3.7')
 		s.printObject('obj1')
-		s.delAddress('obj1', '1.2.3.6')
+		s.delAddress('obj1', '10.2.3.6')
 		s.printObject('obj1')
 		s.clearObject('obj1')
 		s.printObject('obj1')
