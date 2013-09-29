@@ -43,7 +43,7 @@ The dynamic object named 'dyn2' would be resolved to the list of addresses assoc
 + If a host name resolves to multiple IP addresses, the script would add all of them to the dynamic object
 + The set of resolved IP addresses depends on where the script is run. (e.g. running the script in different geographic locations could yield different addresses)
 + In addition to password based authentication, the script supports SSH client authentication with public keys
-+ The code depends on the popular Python SSH module [paramiko](http://www.lag.net/paramiko/)
++ The code depends on the popular Python SSH module [paramiko](https://github.com/paramiko/paramiko)
 + Today, dynamic objects in Check Point disable templates generation for all rules that follow a rule with a dynamic object
 
 
