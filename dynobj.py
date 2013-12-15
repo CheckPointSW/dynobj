@@ -13,9 +13,10 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
-   
+
 
 import paramiko
+import re
 import socket
 import struct
 import sys
@@ -37,6 +38,10 @@ def aton(ipstr):
 def ntoa(ip):
 	return socket.inet_ntoa(struct.pack('!L', ip))
 
+def validateToken(token):
+	if not re.match(r'[a-zA-Z0-9_.-]+$', token):
+		raise Exception('Invalid token:\n' + repr(token))
+
 class Session(object):
 	"""Implements an SSH session with a gateway."""
 
@@ -56,8 +61,10 @@ class Session(object):
 			cmd.append(p)
 			if p == '&&':
 				cmd.append(DYNOBJ_COMMAND)
+			else:
+				validateToken(p)
 		cmd.extend(['||', 'echo', ERROR_TOKEN])
-			
+
 		debug(' '.join(cmd))
 		stdin, stdout, stderr = self.client.exec_command(' '.join(cmd))
 		out = [line.strip() for line in stdout.readlines()]
@@ -107,7 +114,7 @@ class Session(object):
 			print self.getObjects()
 			return
 		print name + ':', self.getObject(name)
-		
+
 	def addObject(self, name, allowExisting=False):
 		"""Creates a new empty dynamic object."""
 		obj = self.getObject(name, False)
