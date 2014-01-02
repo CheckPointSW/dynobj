@@ -14,211 +14,292 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+"""Remotely manage dynamic objects"""
 
-import paramiko
+
+import logging
+import os
 import re
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 
-DYNOBJ_COMMAND = 'dynamic_objects'
-DEBUG = False
 
-ERROR_TOKEN = '__ERROR__'
+_DYNOBJ_COMMAND = 'dynamic_objects'
+_ERROR_TOKEN = '__ERROR__'
 
-def debug(o, newLine=True):
-	if DEBUG:
-		sys.stderr.write(str(o))
-		if newLine:
-			sys.stderr.write('\n')
 
-def aton(ipstr):
-	return struct.unpack('!L', socket.inet_aton(ipstr))[0]
+# Initialize logging
+logging.basicConfig()
+debug = logging.getLogger(__name__).debug
+# uncomment for debug logs
+#logging.getLogger(__name__).setLevel(logging.DEBUG)
 
-def ntoa(ip):
-	return socket.inet_ntoa(struct.pack('!L', ip))
 
-def validateToken(token):
-	if not re.match(r'[a-zA-Z0-9_.-]+$', token):
-		raise Exception('Invalid token:\n' + repr(token))
+def _aton(ipstr):
+    return struct.unpack('!L', socket.inet_aton(ipstr))[0]
 
-class Session(object):
-	"""Implements an SSH session with a gateway."""
 
-	def __init__(self, server, user='admin', password=None):
-		"""Initializes the session object with a server address and credentials"""
-		self.client = paramiko.SSHClient()
-		self.client.load_system_host_keys()
-		self.client.connect(server, username=user, password=password)
+def _ntoa(ipaddr):
+    return socket.inet_ntoa(struct.pack('!L', ipaddr))
 
-	def close(self):
-		self.client.close()
 
-	def run(self, *params):
-		debug(params)
-		cmd = [DYNOBJ_COMMAND]
-		for p in params:
-			cmd.append(p)
-			if p == '&&':
-				cmd.append(DYNOBJ_COMMAND)
-			else:
-				validateToken(p)
-		cmd.extend(['||', 'echo', ERROR_TOKEN])
+def _validate_token(token):
+    if not re.match(r'[a-zA-Z0-9_.-]+$', token):
+        raise Exception('Invalid token:\n' + repr(token))
 
-		debug(' '.join(cmd))
-		stdin, stdout, stderr = self.client.exec_command(' '.join(cmd))
-		out = [line.strip() for line in stdout.readlines()]
-		debug(out)
-		if 'File is empty' in out and params[0] == '-l':
-			return []
-		if ERROR_TOKEN in out:
-			raise Exception('Error while running command:\n' + repr(out) +
-					'\n' + repr(stderr.readlines()))
-		return out
 
-	def getObjects(self):
-		"""Return a list of dynamic objects retrieved from the gateway"""
-		lines = self.run('-l')
+def _get_lines(file_obj):
+    """Return all the lines in file_obj."""
+    return [line.strip() for line in file_obj.readlines()]
 
-		objs = {}
-		name = ''
-		ranges = []
 
-		for line in lines:
-			if line.startswith('object name :'):
-				name = line[len('object name :'):].strip()
-			if line.startswith('range '):
-				range = line.partition(':')[2].strip()
-				begin = range.partition('\t')[0].strip()
-				end = range.partition('\t')[2].strip()
-				ranges.append((begin, end))
-			if line == '':
-				if name:
-					objs[name] = ranges
-					ranges = []
-					name = ''
-		return objs
+def _ssh_exec(conf):
+    """Implement remote exec client over ssh"""
+    from paramiko import SSHClient
+    def _rexec(cmd):
+        client = SSHClient()
+        client.load_system_host_keys()
+        try:
+            client.connect(conf['gateway'],
+                username=conf.get('user', 'admin'),
+                password=conf.get('password', None),
+                key_filename=conf.get('key', None))
+            dummy, stdout, stderr = client.exec_command(' '.join(cmd))
+            return _get_lines(stdout), _get_lines(stderr)
+        finally:
+            client.close()
+    return _rexec
 
-	def getObject(self, name, doRaise=True):
-		"""Return the address ranges currently associated with the dynamic object."""
-		objs = self.getObjects()
-		if name not in objs:
-			if doRaise:
-				raise Exception('Object does not exist: ' + repr(name))
-			return None
-		return objs[name]
 
-	def printObject(self, name=None):
-		"""Prints the addresses of a dynamic object with name name or all objects if no name is given."""
-		if name is None:
-			print self.getObjects()
-			return
-		print name + ':', self.getObject(name)
+def _cprid_exec(conf):
+    """Implement remote exec client using cprid_util."""
+    gateway = conf['gateway']
+    tmpdir = os.environ.get('CPDIR')
+    if tmpdir is not None:
+        tmpdir = os.path.join(tmpdir, 'tmp')
+    if tmpdir is None or not os.path.exists(tmpdir):
+        raise Exception('Cannot find $CPDIR/tmp')
 
-	def addObject(self, name, allowExisting=False):
-		"""Creates a new empty dynamic object."""
-		obj = self.getObject(name, False)
-		if obj is None:
-			self.run('-n', name)
-			return
-		if not allowExisting:
-			raise Exception('Object already exists: ' + repr(name))
+    def _mktemp(tag):
+        return tempfile.NamedTemporaryFile(prefix='cprid_' + tag + '_',
+            dir=tmpdir)
 
-	def delObject(self, name):
-		"""Deletes the dynamic object with name 'name'."""
-		self.getObject(name) # assert that the object exists
-		self.run('-do', name)
+    def _rexec(cmd):
+        with _mktemp('out') as out, _mktemp('err') as err:
+            subprocess.call(['cprid_util', '-server', gateway, 'rexec',
+                '-stdout', out.name, '-stderr', err.name,
+                '-rcmd', 'bash', '-c', ' '.join(cmd)])
+            out_lines = _get_lines(out)
+            err_lines = _get_lines(err)
+            return out_lines, err_lines
+    return _rexec
 
-	def clearObject(self, name):
-		"""Removes all address ranges from the given dynamic object."""
-		obj = self.getObject(name)
-		if not len(obj):
-			# Object is already empty
-			return
-		params = ['-o', name, '-r'] + sum([list(r) for r in obj], []) + ['-d']
-		self.run(*params)
 
-	def delAddress(self, name, ipstr):
-		"""Removes the specified address from the given dynamic object."""
-		obj = self.getObject(name)
+def _local_exec(dummy):
+    """Implement a local "remote" exec client"""
+    def _rexec(cmd):
+        out, err = subprocess.Popen(['bash', '-c', ' '.join(cmd)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE).communicate()
+        return out.split('\n'), err.split('\n')
+    return _rexec
 
-		ip = aton(ipstr)
-		ranges = []
-		to_add = ''
 
-		for r in obj:
-			begin = aton(r[0])
-			end = aton(r[1])
-			if not (begin <= ip <= end):
-				continue
-			if begin < ip:
-				ranges.append(ntoa(begin))
-				ranges.append(ntoa(ip - 1))
-			if ip < end:
-				ranges.append(ntoa(ip + 1))
-				ranges.append(ntoa(end))
-			break
-		else:
-			# No matching range was found
-			raise Exception('No such address in object: %s in %s' %
-					(repr(ipstr), repr(obj)))
+class Manager(object):
+    """An API to manage dynamic objects remotely"""
+    def __init__(self, scheme, conf):
+        exec_func = {
+            'ssh': _ssh_exec,
+            'cprid': _cprid_exec,
+            'local': _local_exec,
+        }
+        if not scheme in exec_func:
+            raise Exception('Unsupported scheme "{0}"'.format(scheme))
 
-		params = ['-o', name, '-r', r[0], r[1], '-d']
-		if len(ranges):
-			params.extend(['&&', '-o', name, '-r'] + ranges + ['-a'])
-		self.run(*params)
+        self.rexec = exec_func[scheme](conf)
 
-	def addAddress(self, name, ip):
-		"""Adds the specified address from the given dynamic object."""
-		self.getObject(name) # assert that the object exists
-		self.run('-o', name, '-r', ip, ip, '-a')
+    def _run(self, *params):
+        """Run a remote command to manipulate dynamic objects."""
+        debug(params)
+        cmd = [_DYNOBJ_COMMAND]
+        for param in params:
+            cmd.append(param)
+            if param == '&&':
+                cmd.append(_DYNOBJ_COMMAND)
+            else:
+                _validate_token(param)
+        cmd.extend(['||', 'echo', _ERROR_TOKEN])
 
-	def setAddresses(self, name, ips):
-		"""Set a dynamic object to resolve to the given list of IP addresses."""
-		obj = self.getObject(name, False)
-		if obj is None:
-			self.addObject(name)
-			obj = []
-		addrsOld = []
-		addrsNew = []
-		for r in obj:
-			addrsOld.extend(range(aton(r[0]), aton(r[1])))
-			addrsOld.append(aton(r[1]))
-		for ip in ips:
-			addrsNew.append(aton(ip))
-		toRemove = set(addrsOld) - set(addrsNew)
-		toAdd = set(addrsNew) - set(addrsOld)
-		for addr in toAdd:
-			self.addAddress(name, ntoa(addr))
-		for addr in toRemove:
-			self.delAddress(name, ntoa(addr))
+        debug(' '.join(cmd))
+        out, err = self.rexec(cmd)
+        debug(out)
+        debug('')
+        if 'File is empty' in out and params[0] == '-l':
+            return []
+        if _ERROR_TOKEN in out:
+            raise Exception('Error while running command:\n' + repr(out) +
+                    '\n' + repr(err))
+        return out
+
+    def get_objects(self):
+        """Return a list of dynamic objects retrieved from the gateway."""
+        lines = self._run('-l')
+
+        objs = {}
+        name = ''
+        ranges = []
+
+        for line in lines:
+            if line.startswith('object name :'):
+                name = line[len('object name :'):].strip()
+            if line.startswith('range '):
+                range_str = line.partition(':')[2].strip()
+                begin = range_str.partition('\t')[0].strip()
+                end = range_str.partition('\t')[2].strip()
+                ranges.append((begin, end))
+            if line == '':
+                if name:
+                    objs[name] = ranges
+                    ranges = []
+                    name = ''
+        return objs
+
+    def get_object(self, name, do_raise=True):
+        """Return the address ranges of the dynamic object 'name'."""
+        objs = self.get_objects()
+        if name not in objs:
+            if do_raise:
+                raise Exception('Object does not exist: ' + repr(name))
+            return None
+        return objs[name]
+
+    def print_object(self, name=None):
+        """Print the addresses of a dynamic object
+
+        use the object with the name 'name' or all objects if no name is given.
+
+        """
+        if name is None:
+            print self.get_objects()
+            return
+        print name + ':', self.get_object(name)
+
+    def add_object(self, name, allow_existing=False):
+        """Create a new empty dynamic object named 'name'."""
+        obj = self.get_object(name, False)
+        if obj is None:
+            self._run('-n', name)
+            return
+        if not allow_existing:
+            raise Exception('Object already exists: ' + repr(name))
+
+    def del_object(self, name):
+        """Delete the dynamic object 'name'."""
+        self.get_object(name) # assert that the object exists
+        self._run('-do', name)
+
+    def clear_object(self, name):
+        """Remove all address ranges from the dynamic object 'name'."""
+        obj = self.get_object(name)
+        if not len(obj):
+            # Object is already empty
+            return
+        params = ['-o', name, '-r'] + sum([list(r) for r in obj], []) + ['-d']
+        self._run(*params)
+
+    def del_address(self, name, ipstr):
+        """Remove the specified address from the dynamic object 'name'."""
+        obj = self.get_object(name)
+
+        ipaddr = _aton(ipstr)
+        ranges = []
+
+        for iprange in obj:
+            begin = _aton(iprange[0])
+            end = _aton(iprange[1])
+            if not (begin <= ipaddr <= end):
+                continue
+            if begin < ipaddr:
+                ranges.append(_ntoa(begin))
+                ranges.append(_ntoa(ipaddr - 1))
+            if ipaddr < end:
+                ranges.append(_ntoa(ipaddr + 1))
+                ranges.append(_ntoa(end))
+            matching = iprange
+            break
+        else:
+            # No matching range was found
+            raise Exception('No such address in object: %s in %s' %
+                    (repr(ipstr), repr(obj)))
+
+        params = ['-o', name, '-r', matching[0], matching[1], '-d']
+        if len(ranges):
+            params.extend(['&&', '-o', name, '-r'] + ranges + ['-a'])
+        self._run(*params)
+
+    def add_address(self, name, ipstr):
+        """Add the specified address to the dynamic object 'name'."""
+        self.get_object(name) # assert that the object exists
+        self._run('-o', name, '-r', ipstr, ipstr, '-a')
+
+    def set_addresses(self, name, ips):
+        """Set a dynamic object 'name' to resolve to the address list 'ips'."""
+        obj = self.get_object(name, False)
+        if obj is None:
+            self.add_object(name)
+            obj = []
+        addrs_old = []
+        addrs_new = []
+        for iprange in obj:
+            addrs_old.extend(range(_aton(iprange[0]), _aton(iprange[1])))
+            addrs_old.append(_aton(iprange[1]))
+        for ipstr in ips:
+            addrs_new.append(_aton(ipstr))
+        to_remove = set(addrs_old) - set(addrs_new)
+        to_add = set(addrs_new) - set(addrs_old)
+        for addr in to_add:
+            self.add_address(name, _ntoa(addr))
+        for addr in to_remove:
+            self.del_address(name, _ntoa(addr))
+
+
+def _main(argv):
+    if len(argv) < 2 or len(argv) % 2:
+        raise Exception("""
+        Usage:
+            {0} ssh gateway SERVER [user USER [password PASSWORD]]
+            {0} cprid gateway SERVER
+            {0} local
+        """.format(argv[0]))
+
+    manager = Manager(argv[1], dict(zip(argv[2::2], argv[3::2])))
+    myobj = 'obj1'
+    manager.print_object()
+    manager.add_object(myobj, True)
+    manager.print_object(myobj)
+    manager.add_address(myobj, '10.2.3.4')
+    manager.print_object(myobj)
+    manager.add_address(myobj, '10.2.3.5')
+    manager.print_object(myobj)
+    manager.add_address(myobj, '10.2.3.7')
+    manager.print_object(myobj)
+    manager.add_address(myobj, '10.2.3.6')
+    manager.print_object(myobj)
+    manager.del_address(myobj, '10.2.3.5')
+    manager.print_object(myobj)
+    manager.del_address(myobj, '10.2.3.7')
+    manager.print_object(myobj)
+    manager.del_address(myobj, '10.2.3.6')
+    manager.print_object(myobj)
+    manager.clear_object(myobj)
+    manager.print_object(myobj)
+    manager.del_object(myobj)
+    manager.print_object()
 
 if __name__ == '__main__':
-	s = None
-	try:
-		s = Session('192.168.133.99') # Session(GATEWAY, ADMIN, ADMIN_PASSWORD)
-		s.printObject()
-		s.addObject('obj1', True)
-		s.printObject('obj1')
-		s.addAddress('obj1', '10.2.3.4')
-		s.printObject('obj1')
-		s.addAddress('obj1', '10.2.3.5')
-		s.printObject('obj1')
-		s.addAddress('obj1', '10.2.3.7')
-		s.printObject('obj1')
-		s.addAddress('obj1', '10.2.3.6')
-		s.printObject('obj1')
-		s.delAddress('obj1', '10.2.3.5')
-		s.printObject('obj1')
-		s.delAddress('obj1', '10.2.3.7')
-		s.printObject('obj1')
-		s.delAddress('obj1', '10.2.3.6')
-		s.printObject('obj1')
-		s.clearObject('obj1')
-		s.printObject('obj1')
-		s.delObject('obj1')
-		s.printObject()
-	finally:
-		if s is not None:
-			s.close()
+    _main(sys.argv)
 
