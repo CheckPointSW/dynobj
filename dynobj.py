@@ -35,7 +35,7 @@ _ERROR_TOKEN = '__ERROR__'
 logging.basicConfig()
 debug = logging.getLogger(__name__).debug
 # uncomment for debug logs
-#logging.getLogger(__name__).setLevel(logging.DEBUG)
+# logging.getLogger(__name__).setLevel(logging.DEBUG)
 
 
 def _aton(ipstr):
@@ -59,11 +59,13 @@ def _get_lines(file_obj):
 def _ssh_exec(conf):
     """Implement remote exec client over ssh"""
     from paramiko import SSHClient
+
     def _rexec(cmd):
         client = SSHClient()
         client.load_system_host_keys()
         try:
-            client.connect(conf['gateway'],
+            client.connect(
+                conf['gateway'],
                 username=conf.get('user', 'admin'),
                 password=conf.get('password', None),
                 key_filename=conf.get('key', None))
@@ -85,11 +87,12 @@ def _cprid_exec(conf):
 
     def _mktemp(tag):
         return tempfile.NamedTemporaryFile(prefix='cprid_' + tag + '_',
-            dir=tmpdir)
+                                           dir=tmpdir)
 
     def _rexec(cmd):
         with _mktemp('out') as out, _mktemp('err') as err:
-            subprocess.call(['cprid_util', '-server', gateway, 'rexec',
+            subprocess.call([
+                'cprid_util', '-server', gateway, 'rexec',
                 '-stdout', out.name, '-stderr', err.name,
                 '-rcmd', 'bash', '-c', ' '.join(cmd)])
             out_lines = _get_lines(out)
@@ -101,7 +104,8 @@ def _cprid_exec(conf):
 def _local_exec(dummy):
     """Implement a local "remote" exec client"""
     def _rexec(cmd):
-        out, err = subprocess.Popen(['bash', '-c', ' '.join(cmd)],
+        out, err = subprocess.Popen(
+            ['bash', '-c', ' '.join(cmd)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE).communicate()
@@ -117,7 +121,7 @@ class Manager(object):
             'cprid': _cprid_exec,
             'local': _local_exec,
         }
-        if not scheme in exec_func:
+        if scheme not in exec_func:
             raise Exception('Unsupported scheme "{0}"'.format(scheme))
 
         self.rexec = exec_func[scheme](conf)
@@ -142,7 +146,7 @@ class Manager(object):
             return []
         if _ERROR_TOKEN in out:
             raise Exception('Error while running command:\n' + repr(out) +
-                    '\n' + repr(err))
+                            '\n' + repr(err))
         return out
 
     def get_objects(self):
@@ -199,7 +203,7 @@ class Manager(object):
 
     def del_object(self, name):
         """Delete the dynamic object 'name'."""
-        self.get_object(name) # assert that the object exists
+        self.get_object(name)  # assert that the object exists
         self._run('-do', name)
 
     def clear_object(self, name):
@@ -234,7 +238,7 @@ class Manager(object):
         else:
             # No matching range was found
             raise Exception('No such address in object: %s in %s' %
-                    (repr(ipstr), repr(obj)))
+                            (repr(ipstr), repr(obj)))
 
         params = ['-o', name, '-r', matching[0], matching[1], '-d']
         if len(ranges):
@@ -243,7 +247,7 @@ class Manager(object):
 
     def add_address(self, name, ipstr):
         """Add the specified address to the dynamic object 'name'."""
-        self.get_object(name) # assert that the object exists
+        self.get_object(name)  # assert that the object exists
         self._run('-o', name, '-r', ipstr, ipstr, '-a')
 
     def set_addresses(self, name, ips):
@@ -302,4 +306,3 @@ def _main(argv):
 
 if __name__ == '__main__':
     _main(sys.argv)
-

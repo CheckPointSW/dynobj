@@ -23,10 +23,10 @@ import socket
 
 import dynobj
 
-#{
-#    "dynObj1" : ["host1.example.com", "host2.example.com" ],
-#    "dynObj2" : ["host1.example2.com", "host2.example2.com" ]
-#}
+# {
+#     "dynObj1" : ["host1.example.com", "host2.example.com" ],
+#     "dynObj2" : ["host1.example2.com", "host2.example2.com" ]
+# }
 
 
 def read_conf(filename):
@@ -57,7 +57,7 @@ class Resolver:
                 result.extend(self(host))
             result = list(set(result))
         else:
-            if not what in self._cache:
+            if what not in self._cache:
                 self._cache[what] = socket.gethostbyname_ex(str(what))[2]
             result = self._cache[what]
         dynobj.debug('%s -> %s', what, result)
@@ -66,26 +66,34 @@ class Resolver:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--file', dest='filename', required=True,
+    parser.add_argument(
+        '-f', '--file', dest='filename', required=True,
         help='read configuration from FILE', metavar='FILE')
-    parser.add_argument('-s', '--scheme', dest='scheme', required=True,
+    parser.add_argument(
+        '-s', '--scheme', dest='scheme', required=True,
         choices=['ssh', 'cprid', 'local'],
         help='method of remote execution')
-    parser.add_argument('-g', '--gateway', dest='gateway',
+    parser.add_argument(
+        '-g', '--gateway', dest='gateway',
         help='connect to GATEWAY')
-    parser.add_argument('-u', '--user', dest='user', default='admin',
+    parser.add_argument(
+        '-u', '--user', dest='user', default='admin',
         help='the admin username')
-    parser.add_argument('-p', '--password', dest='password', default=None,
+    parser.add_argument(
+        '-p', '--password', dest='password', default=None,
         help='the admin password. Use \'-\' to read from the console')
-    parser.add_argument('-i', '--identity', dest='key', default=None,
+    parser.add_argument(
+        '-i', '--identity', dest='key', default=None,
         help='the admin private key file')
-    parser.add_argument('-d', '--debug', dest='debug', action='store_true',
+    parser.add_argument(
+        '-d', '--debug', dest='debug', action='store_true',
         default=False, help='enable debug')
 
     args = parser.parse_args()
 
     if args.debug:
-        dynobj.logging.getLogger(dynobj.__name__).setLevel(dynobj.logging.DEBUG)
+        dynobj.logging.getLogger(dynobj.__name__).setLevel(
+            dynobj.logging.DEBUG)
 
     if args.password == '-':
         args.password = getpass.getpass()
@@ -99,4 +107,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
