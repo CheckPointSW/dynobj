@@ -46,6 +46,21 @@ def _ntoa(ipaddr):
     return socket.inet_ntoa(struct.pack('!L', ipaddr))
 
 
+def _addr_to_n(ipstr):
+    addr, slash, mask = ipstr.partition('/')
+    if not mask:
+        begin, dash, end = addr.partition('-')
+        if not end:
+            end = begin
+        return _aton(begin), _aton(end)
+    addr = _aton(addr)
+    nbits = int(mask)
+    if not 0 <= nbits <= 32:
+        raise Exception('Invalid IP mask: ' + repr(mask))
+    mask = ~((1 << (32 - nbits)) - 1) & 0xffffffff
+    return addr & mask & 0xffffffff, (addr & mask | ~mask) & 0xffffffff
+
+
 def _validate_token(token):
     if not re.match(r'[a-zA-Z0-9_.-]+$', token):
         raise Exception('Invalid token:\n' + repr(token))
@@ -114,7 +129,14 @@ def _local_exec(dummy):
 
 
 class Manager(object):
-    """An API to manage dynamic objects remotely"""
+    """An API to manage dynamic objects remotely
+
+
+    The IP address argument to the methods should be one of:
+    - ADDR an address in dotted decimal notation
+    - ADDR/BITS an address block in CIDR notation
+    - ADDR1-ADDR2 a range of addresses
+    """
     def __init__(self, scheme, conf):
         exec_func = {
             'ssh': _ssh_exec,
@@ -219,36 +241,48 @@ class Manager(object):
         """Remove the specified address from the dynamic object 'name'."""
         obj = self.get_object(name)
 
-        ipaddr = _aton(ipstr)
+        dbegin, dend = _addr_to_n(ipstr)
         ranges = []
 
+        matching = []
         for iprange in obj:
-            begin = _aton(iprange[0])
-            end = _aton(iprange[1])
-            if not (begin <= ipaddr <= end):
+            rbegin = _aton(iprange[0])
+            rend = _aton(iprange[1])
+            if rbegin > dend or rend < dbegin:
                 continue
-            if begin < ipaddr:
-                ranges.append(_ntoa(begin))
-                ranges.append(_ntoa(ipaddr - 1))
-            if ipaddr < end:
-                ranges.append(_ntoa(ipaddr + 1))
-                ranges.append(_ntoa(end))
-            matching = iprange
-            break
-        else:
+            if rbegin < dbegin:
+                ranges.append(_ntoa(rbegin))
+                ranges.append(_ntoa(dbegin - 1))
+            if dend < rend:
+                ranges.append(_ntoa(dend + 1))
+                ranges.append(_ntoa(rend))
+            matching.extend(iprange)
+        if not matching:
             # No matching range was found
             raise Exception('No such address in object: %s in %s' %
                             (repr(ipstr), repr(obj)))
 
-        params = ['-o', name, '-r', matching[0], matching[1], '-d']
+        params = ['-o', name, '-r'] + matching + ['-d']
         if len(ranges):
             params.extend(['&&', '-o', name, '-r'] + ranges + ['-a'])
         self._run(*params)
 
     def add_address(self, name, ipstr):
-        """Add the specified address to the dynamic object 'name'."""
+        """Add the specified address(es) to the dynamic object 'name'."""
         self.get_object(name)  # assert that the object exists
-        self._run('-o', name, '-r', ipstr, ipstr, '-a')
+        if isinstance(ipstr, list):
+            ipstrs = ipstr
+            if not len(ipstrs):
+                raise Exception('Empty list of addresses to add')
+        else:
+            ipstrs = [ipstr]
+        to_add = []
+        for ipstr in ipstrs:
+            begin, end = _addr_to_n(ipstr)
+            to_add.append(_ntoa(begin))
+            to_add.append(_ntoa(end))
+        params = ['-o', name, '-r'] + to_add + ['-a']
+        self._run(*params)
 
     def set_addresses(self, name, ips):
         """Set a dynamic object 'name' to resolve to the address list 'ips'."""
@@ -256,19 +290,9 @@ class Manager(object):
         if obj is None:
             self.add_object(name)
             obj = []
-        addrs_old = []
-        addrs_new = []
-        for iprange in obj:
-            addrs_old.extend(range(_aton(iprange[0]), _aton(iprange[1])))
-            addrs_old.append(_aton(iprange[1]))
-        for ipstr in ips:
-            addrs_new.append(_aton(ipstr))
-        to_remove = set(addrs_old) - set(addrs_new)
-        to_add = set(addrs_new) - set(addrs_old)
-        for addr in to_add:
-            self.add_address(name, _ntoa(addr))
-        for addr in to_remove:
-            self.del_address(name, _ntoa(addr))
+        else:
+            self.clear_object(name)
+        self.add_address(name, ips)
 
 
 def _main(argv):
@@ -285,19 +309,22 @@ def _main(argv):
     manager.print_object()
     manager.add_object(myobj, True)
     manager.print_object(myobj)
-    manager.add_address(myobj, '10.2.3.4')
+    manager.add_address(myobj, '10.2.3.4/31')
     manager.print_object(myobj)
-    manager.add_address(myobj, '10.2.3.5')
+    manager.add_address(myobj, '10.2.3.6/31')
     manager.print_object(myobj)
-    manager.add_address(myobj, '10.2.3.7')
+    manager.add_address(myobj, '10.2.3.13/31')
     manager.print_object(myobj)
-    manager.add_address(myobj, '10.2.3.6')
+    manager.add_address(myobj, '10.2.3.8')
     manager.print_object(myobj)
-    manager.del_address(myobj, '10.2.3.5')
+    manager.add_address(myobj, '10.2.3.9')
     manager.print_object(myobj)
-    manager.del_address(myobj, '10.2.3.7')
+    manager.del_address(myobj, '10.2.3.5-10.2.3.6')
     manager.print_object(myobj)
-    manager.del_address(myobj, '10.2.3.6')
+    manager.del_address(myobj, '10.2.3.7/30')
+    manager.print_object(myobj)
+    manager.set_addresses(myobj, ['10.2.3.2/30', '10.2.3.4',
+                                  '10.2.3.8-10.2.3.11'])
     manager.print_object(myobj)
     manager.clear_object(myobj)
     manager.print_object(myobj)
