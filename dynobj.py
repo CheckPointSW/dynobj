@@ -293,3 +293,40 @@ class Manager(object):
         else:
             self.clear_object(name)
         self.add_address(name, ips)
+
+
+def _main(argv):
+    if len(argv) < 2 or len(argv) % 2:
+        raise Exception("""
+        Usage:
+            {0} ssh gateway SERVER [user USER [password PASSWORD]]
+            {0} cprid gateway SERVER
+            {0} local
+        """.format(argv[0]))
+
+    manager = Manager(argv[1], dict(zip(argv[2::2], argv[3::2])))
+    for line in sys.stdin:
+        args = line.strip().split()
+        if args[0] == 'print':
+            if len(args) > 1:
+                obj = args[1]
+            else:
+                obj = None
+            manager.print_object(obj)
+        elif args[0] == 'create':
+            manager.add_object(args[1], allow_existing=True)
+        elif args[0] == 'destroy':
+            manager.del_object(args[1])
+        elif args[0] == 'add':
+            manager.add_address(args[1], args[2:])
+        elif args[0] == 'del':
+            manager.del_address(args[1], args[2])
+        elif args[0] == 'set':
+            manager.set_addresses(args[1], args[2:])
+        elif args[0] == 'clear':
+            manager.clear_object(args[1])
+        else:
+            raise Exception('Unknown command: ' + repr(args[0]))
+
+if __name__ == '__main__':
+    _main(sys.argv)
