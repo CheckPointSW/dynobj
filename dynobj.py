@@ -17,6 +17,7 @@
 """Remotely manage dynamic objects"""
 
 
+import json
 import logging
 import os
 import re
@@ -210,9 +211,9 @@ class Manager(object):
 
         """
         if name is None:
-            print self.get_objects()
+            print json.dumps(self.get_objects())
             return
-        print name + ':', self.get_object(name)
+        print json.dumps(self.get_object(name))
 
     def add_object(self, name, allow_existing=False):
         """Create a new empty dynamic object named 'name'."""
