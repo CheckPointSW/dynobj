@@ -95,25 +95,17 @@ def _ssh_exec(conf):
 def _cprid_exec(conf):
     """Implement remote exec client using cprid_util."""
     gateway = conf['gateway']
-    tmpdir = os.environ.get('CPDIR')
-    if tmpdir is not None:
-        tmpdir = os.path.join(tmpdir, 'tmp')
-    if tmpdir is None or not os.path.exists(tmpdir):
-        raise Exception('Cannot find $CPDIR/tmp')
-
-    def _mktemp(tag):
-        return tempfile.NamedTemporaryFile(prefix='cprid_' + tag + '_',
-                                           dir=tmpdir)
 
     def _rexec(cmd):
-        with _mktemp('out') as out, _mktemp('err') as err:
-            subprocess.call([
+        err = []
+        try:
+            out = subprocess.check_output([
                 'cprid_util', '-server', gateway, 'rexec',
-                '-stdout', out.name, '-stderr', err.name,
-                '-rcmd', 'bash', '-c', ' '.join(cmd)])
-            out_lines = _get_lines(out)
-            err_lines = _get_lines(err)
-            return out_lines, err_lines
+                '-verbose', '-rcmd', 'bash', '-c', ' '.join(cmd)])
+        except:
+            out = _ERROR_TOKEN
+            err.append(str(sys.exc_info()[1]))
+        return out.split('\n'), err
     return _rexec
 
 
