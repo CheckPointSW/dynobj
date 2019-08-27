@@ -19,13 +19,11 @@
 
 import json
 import logging
-import os
 import re
 import socket
 import struct
 import subprocess
 import sys
-import tempfile
 
 
 _DYNOBJ_COMMAND = 'dynamic_objects'
@@ -175,10 +173,10 @@ class Manager(object):
         for line in lines:
             if line.startswith('object name :'):
                 name = line[len('object name :'):].strip()
-            if line.startswith('range '):
-                range_str = line.partition(':')[2].strip()
-                begin = range_str.partition('\t')[0].strip()
-                end = range_str.partition('\t')[2].strip()
+            match_obj = re.match(r'range\s+[^:]*:\s*(\S+)\s+(\S+)\s*$', line)
+            if match_obj:
+                begin = match_obj.group(1)
+                end = match_obj.group(2)
                 ranges.append((begin, end))
             if line == '':
                 if name:
